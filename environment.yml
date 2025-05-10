@@ -1,0 +1,8 @@
+name: gwas
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - plink2
+  - r-qqman
+  - r-ggplot2
