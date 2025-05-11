@@ -1,0 +1,26 @@
+id: gwas-example
+name: GWAS Example Pipeline
+description: Pipeline to perform a simple GWAS
+version: 1.0.0
+website: https://github.com/lukfor/gwas-example
+workflow:
+  steps:
+    - name: GWAS
+      script: main.nf
+
+  inputs:
+    - id: genotypes
+      description: Genotypes
+      type: file
+    - id: phenotypes
+      description: Phenotypes
+      type: file
+    - id: pheno_name
+      description: Phenotype Column
+      value: caffeine_consumption
+      type: text
+
+  outputs:
+    - id: outdir
+      description: Output
+      type: folder

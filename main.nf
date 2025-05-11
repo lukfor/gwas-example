@@ -3,6 +3,7 @@
 // Pipeline parameters
 params.genotypes = "data/genotypes.vcf.gz"
 params.phenotypes = "data/phenotypes.txt"
+params.pheno_name = "caffeine_consumption"
 params.outdir = "output"
 
 // Define processes
@@ -64,7 +65,7 @@ process RUN_GWAS {
     plink2 --vcf ${filtered_genotypes} \
            --double-id \
            --pheno ${phenotypes} \
-           --pheno-name caffeine_consumption \
+           --pheno-name ${params$pheno_name} \
            --covar ${pca_results} \
            --linear hide-covar \
            --out gwas
