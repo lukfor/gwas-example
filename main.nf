@@ -4,11 +4,10 @@
 params.genotypes = "data/genotypes.vcf.gz"
 params.phenotypes = "data/phenotypes.txt"
 params.pheno_name = "caffeine_consumption"
-params.outdir = "output"
+params.output = "output"
 
 // Define processes
 process QUALITY_CONTROL {
-    conda 'environment.yml'
 
     input:
     path genotypes
@@ -30,8 +29,7 @@ process QUALITY_CONTROL {
 }
 
 process CALCULATE_PCA {
-    conda 'environment.yml'
-    publishDir "${params.outdir}", mode: 'copy'
+    publishDir "${params.output}", mode: 'copy'
 
     input:
     path filtered_genotypes
@@ -49,32 +47,28 @@ process CALCULATE_PCA {
 }
 
 process RUN_GWAS {
-    conda 'environment.yml'
-    publishDir "${params.outdir}", mode: 'copy'
+    publishDir "${params.output}", mode: 'copy'
 
     input:
-    path filtered_genotypes
-    path phenotypes
-    path pca_results
+    tuple path(filtered_genotypes), path(phenotypes), path(pca_results), val(pheno_name)
 
     output:
-    path "gwas.*.linear", emit: gwas_results
+    tuple val(pheno_name), path("*.gwas.*.glm.*"), emit: gwas_results
 
     script:
     """
     plink2 --vcf ${filtered_genotypes} \
            --double-id \
            --pheno ${phenotypes} \
-           --pheno-name ${params$pheno_name} \
+           --pheno-name ${pheno_name} \
            --covar ${pca_results} \
            --linear hide-covar \
-           --out gwas
+           --out ${pheno_name}.gwas
     """
 }
 
 process PLOT_PCA {
-    conda 'environment.yml'
-    publishDir "${params.outdir}", mode: 'copy'
+    publishDir "${params.output}", mode: 'copy'
 
     input:
     path result
@@ -84,7 +78,7 @@ process PLOT_PCA {
 
     script:
     """
-    #!RScript
+    #!Rscript
     library("ggplot2")
     pca_data <- read.table("${result}", header=TRUE, comment.char="")
     png("${result.baseName}.png", width = 1200, height = 800)
@@ -94,18 +88,17 @@ process PLOT_PCA {
 }
 
 process PLOT_RESULTS {
-    conda 'environment.yml'
-    publishDir "${params.outdir}", mode: 'copy'
+    publishDir "${params.output}", mode: 'copy'
 
     input:
-    path result
+    tuple val(pheno_name), path(result)
 
     output:
     path "*.png", emit: gwas_results
 
     script:
     """
-    #!RScript
+    #!Rscript
     library("qqman")
     gwas_result <- read.table("${result}", header=TRUE, comment.char="")
     png("${result.baseName}.manhattan.png", width = 1200, height = 800)
@@ -114,7 +107,6 @@ process PLOT_RESULTS {
     png("${result.baseName}.qq.png", width = 1200, height = 800)
     qq(gwas_result\$P)
     dev.off()    
-    #TODO: qq-plot
     """
 }
 
@@ -122,15 +114,25 @@ process PLOT_RESULTS {
 // Define workflow
 workflow {
     // Quality control
-    genotypes_ch = channel.fromPath(params.genotypes, checkIfExists: true)
+    genotypes_ch = Channel.fromPath(params.genotypes, checkIfExists: true)
     filtered_genotypes_ch = QUALITY_CONTROL(genotypes_ch)
 
     // Calculate PCA
     pca_ch = CALCULATE_PCA(filtered_genotypes_ch)
 
-    // Run GWAS
-    phenotypes_ch = channel.fromPath(params.phenotypes, checkIfExists: true)
-    gwas_ch = RUN_GWAS(filtered_genotypes_ch, phenotypes_ch, pca_ch)
+    phenotypes_ch = Channel.fromPath(params.phenotypes, checkIfExists: true)
+
+    // Split the phenotype names and create a channel
+    pheno_names_ch = Channel.of(params.pheno_name)
+    
+    // Combine the phenotype names with the other required channels
+    combined_input_ch = filtered_genotypes_ch
+        .combine(phenotypes_ch)
+        .combine(pca_ch)
+        .combine(pheno_names_ch)
+
+    // Run GWAS for each combination
+    gwas_ch = RUN_GWAS(combined_input_ch)
 
     PLOT_PCA(pca_ch)
     PLOT_RESULTS(gwas_ch)

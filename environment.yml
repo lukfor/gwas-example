@@ -3,6 +3,6 @@ channels:
   - conda-forge
   - bioconda
 dependencies:
-  - plink2
-  - r-qqman
-  - r-ggplot2
+  - plink2=2.0.0a.6.9
+  - r-qqman=0.1.9
+  - r-ggplot2=3.5.2
