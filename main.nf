@@ -1,10 +1,10 @@
 #!/usr/bin/env nextflow
 
 // Pipeline parameters
-params.genotypes = "data/genotypes.vcf.gz"
+params.genotypes = "data/files/*.vcf.gz"
 params.phenotypes = "data/phenotypes.txt"
-params.pheno_name = "caffeine_consumption"
-params.output = "output"
+params.pheno_name = "caffeine_consumption,purple_hair"
+params.outdir = "output"
 
 // Define processes
 process QUALITY_CONTROL {
@@ -13,23 +13,22 @@ process QUALITY_CONTROL {
     path genotypes
 
     output:
-    path "genotypes.filtered.vcf.gz", emit: filtered_genotypes
+    path "${genotypes.baseName}.filtered.vcf.gz", emit: filtered_genotypes
 
     script:
     """
     plink2 --vcf ${genotypes} \
            --maf 0.01 \
            --hwe 1e-6 \
-           --mind 0.03 \
            --autosome \
            --keep-allele-order \
            --recode vcf bgz \
-           --out genotypes.filtered
+           --out ${genotypes.baseName}.filtered
     """
 }
 
 process CALCULATE_PCA {
-    publishDir "${params.output}", mode: 'copy'
+    publishDir "${params.outdir}", mode: 'copy'
 
     input:
     path filtered_genotypes
@@ -39,7 +38,10 @@ process CALCULATE_PCA {
 
     script:
     """
-    plink2 --vcf ${filtered_genotypes} \
+
+    bcftools concat ${filtered_genotypes} -Oz -o merged.vcf.gz
+
+    plink2 --vcf merged.vcf.gz \
            --double-id \
            --pca \
            --out pca
@@ -47,8 +49,6 @@ process CALCULATE_PCA {
 }
 
 process RUN_GWAS {
-    publishDir "${params.output}", mode: 'copy'
-
     input:
     tuple path(filtered_genotypes), path(phenotypes), path(pca_results), val(pheno_name)
 
@@ -63,12 +63,12 @@ process RUN_GWAS {
            --pheno-name ${pheno_name} \
            --covar ${pca_results} \
            --linear hide-covar \
-           --out ${pheno_name}.gwas
+           --out ${filtered_genotypes.baseName}.gwas
     """
 }
 
 process PLOT_PCA {
-    publishDir "${params.output}", mode: 'copy'
+    publishDir "${params.outdir}", mode: 'copy'
 
     input:
     path result
@@ -87,8 +87,24 @@ process PLOT_PCA {
     """
 }
 
+process MERGE_GWAS_RESULTS {
+    publishDir "${params.outdir}", mode: 'copy'
+
+    input:
+    tuple val(pheno_name), path(results)
+
+    output:
+    tuple val(pheno_name), path("${pheno_name}.txt"), emit: merged_results
+
+    script:
+    """
+    csvtk concat -C "" ${results} > ${pheno_name}.txt
+    """
+}
+
+
 process PLOT_RESULTS {
-    publishDir "${params.output}", mode: 'copy'
+    publishDir "${params.outdir}", mode: 'copy'
 
     input:
     tuple val(pheno_name), path(result)
@@ -111,20 +127,22 @@ process PLOT_RESULTS {
 }
 
 
+
 // Define workflow
 workflow {
     // Quality control
-    genotypes_ch = Channel.fromPath(params.genotypes, checkIfExists: true)
+    genotypes_ch = channel.fromPath(params.genotypes, checkIfExists: true)
     filtered_genotypes_ch = QUALITY_CONTROL(genotypes_ch)
 
     // Calculate PCA
-    pca_ch = CALCULATE_PCA(filtered_genotypes_ch)
+    pca_ch = CALCULATE_PCA(filtered_genotypes_ch.collect())
+    PLOT_PCA(pca_ch)
 
-    phenotypes_ch = Channel.fromPath(params.phenotypes, checkIfExists: true)
+    phenotypes_ch = channel.fromPath(params.phenotypes, checkIfExists: true)
 
     // Split the phenotype names and create a channel
-    pheno_names_ch = Channel.of(params.pheno_name)
-    
+    pheno_names_ch = channel.of(params.pheno_name.split(","))
+
     // Combine the phenotype names with the other required channels
     combined_input_ch = filtered_genotypes_ch
         .combine(phenotypes_ch)
@@ -133,7 +151,7 @@ workflow {
 
     // Run GWAS for each combination
     gwas_ch = RUN_GWAS(combined_input_ch)
-
-    PLOT_PCA(pca_ch)
-    PLOT_RESULTS(gwas_ch)
+    merged_gwas_ch = MERGE_GWAS_RESULTS(gwas_ch.groupTuple())
+    
+    PLOT_RESULTS(merged_gwas_ch)
 }
